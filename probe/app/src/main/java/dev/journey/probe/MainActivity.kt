@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
         HealthPermission.getReadPermission(StepsRecord::class),
         HealthPermission.getReadPermission(DistanceRecord::class),
         HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND,
+        HealthPermission.getWritePermission(StepsRecord::class),
     )
 
     private val requestPermissions =
@@ -85,6 +86,27 @@ class MainActivity : ComponentActivity() {
                 }
             })
             addView(button("Run snapshot") { clear(); probe() })
+            addView(button("Run dedup test") {
+                clear()
+                lifecycleScope.launch {
+                    try {
+                        DedupTest.run(this@MainActivity) { emit(it) }
+                    } catch (e: Exception) {
+                        emit("DEDUP TEST FAILED: ${e::class.simpleName}: ${e.message}")
+                        Log.e("JourneyProbe", "dedup test failed", e)
+                    }
+                }
+            })
+            addView(button("Clean up injected steps") {
+                clear()
+                lifecycleScope.launch {
+                    try {
+                        DedupTest.cleanUp(this@MainActivity) { emit(it) }
+                    } catch (e: Exception) {
+                        emit("CLEANUP FAILED: ${e::class.simpleName}: ${e.message}")
+                    }
+                }
+            })
             addView(button("Start soak (15 min)") { startSoak(15) })
             addView(button("Start soak (60 min)") { startSoak(60) })
             addView(button("Stop soak") {

@@ -74,6 +74,37 @@ Run the soak at **15 minutes** first — WorkManager's floor, and therefore the 
 If 15 is cheap then 60 is trivially cheap, and the interval becomes a UX choice rather
 than a battery one. Measuring the gentle setting teaches nothing.
 
+## Dedup test
+
+The most important instrument here, because it checks something the app's correctness
+depends on.
+
+We credit Expeditions from `aggregate(StepsRecord.COUNT_TOTAL)` on the documented promise
+that Health Connect keeps only the highest-priority source when several apps write
+overlapping data. If that promise does not hold, every Expedition over-counts and the app
+is quietly, invisibly wrong. It has never been exercised, because this device has only
+ever had one writer.
+
+**Run dedup test** injects 50,000 steps overlapping the last 3 hours of real data, then
+compares `aggregate()` against the raw sum:
+
+| Result | Meaning |
+| --- | --- |
+| aggregate unchanged | Deduplicated — our record lost on priority. ADR-0007 holds. |
+| aggregate +50,000 | **No dedup.** We would double-count. ADR-0007 needs revisiting. |
+| aggregate +something | Priority resolved per sub-interval. Worth understanding before relying on it. |
+
+It deletes its own record afterwards. An app can only delete data it wrote, so this
+cannot touch real step history. **Clean up injected steps** re-runs the deletion if a
+test is interrupted.
+
+Needs real steps in the window to overlap with — walk for a few minutes first, or it will
+tell you there is nothing to test against.
+
+Note this tests **steps**, not distance. Distance dedup is irrelevant to us: ADR-0007 means
+the app never reads `DistanceRecord`. A GPS tracker like OpenTracks cannot exercise this
+path at all, since without `ACTIVITY_RECOGNITION` it cannot write steps.
+
 ## Height
 
 Set it before starting a soak. Stride is estimated at `height x 0.414`, which is what

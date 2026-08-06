@@ -10,6 +10,10 @@
          soak worker silently reads nothing once the app is backgrounded. -->
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
+    <!-- Write is for the dedup test only: inject an overlapping StepsRecord, see whether
+         aggregate() discards it, then delete it. An app can only delete its own data. -->
+    <uses-permission android:name="android.permission.health.WRITE_STEPS" />
+
     <!-- Needed on Android 13 and below, where Health Connect is a separate APK. -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
