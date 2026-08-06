@@ -29,7 +29,16 @@ same API, same OS constraints.
 adb pull /sdcard/Android/data/dev.journey.probe/files/soak.csv
 ```
 
-Columns: `sampled_at, steps_today, metres_today, est_km, newest_record_end, lag_seconds, note`
+Columns: `sampled_at, steps_today, metres_today, est_km, newest_record_end, lag_seconds, bucket,
+charging, note`
+
+`bucket` is the app's real App Standby bucket at sample time, read via
+`UsageStatsManager.getAppStandbyBucket()` — no permission needed for the app's own bucket. It
+replaces inferring the bucket from gap sizes. `charging` matters because charging exempts an app
+from much of the standby throttling.
+
+Note that the snapshot screen always shows `ACTIVE`, because opening the app promotes it. Only
+the soak log records the buckets that matter.
 
 **What to look for:**
 
@@ -44,6 +53,16 @@ Columns: `sampled_at, steps_today, metres_today, est_km, newest_record_end, lag_
 - **`ERROR` rows** — failures are recorded rather than thrown away. The worker never
   returns `Result.failure()`, since that would cancel the periodic work and end the soak
   silently.
+- **Blank rows are normal, not failures.** `steps_today` counts from local midnight, and
+  `aggregate()` returns **null, not zero**, when no records exist in the range. A run of
+  blank rows overnight means the user was asleep, not that anything broke.
+
+**First soak, 2026-08-05/06, ~21 hours:** battery <1%/day. The worker was never killed —
+every sample `ok`, including fifteen consecutive overnight runs while charging. Gaps of
+~2h and 7h43m appeared once the app went unused, consistent with App Standby buckets; the
+`bucket` column exists to confirm that directly rather than by inference. `lag_seconds`
+ran 14-230s, so Health Connect data is fresh within minutes and scheduling is the entire
+constraint. `metres_today` never populated across ~12,000 steps.
 
 **Battery**, after a day: Settings → Battery → Battery usage → Journey Probe. Or:
 

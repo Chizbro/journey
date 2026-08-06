@@ -184,6 +184,10 @@ class MainActivity : ComponentActivity() {
             )
             emit("Stride: %.3f m/step (height ${Stride.heightCm(this@MainActivity)} cm)"
                 .format(Stride.metresPerStep(this@MainActivity)))
+            emit("App Standby bucket: ${SoakWorker.standbyBucket(this@MainActivity)}" +
+                "   charging: ${if (SoakWorker.isCharging(this@MainActivity)) "yes" else "no"}")
+            emit("  (Opening the app promotes it to ACTIVE, so this always reads ACTIVE here.")
+            emit("   The soak log is where the real buckets show up.)")
             emit("")
 
             emit("Window: $start  ->  $end")

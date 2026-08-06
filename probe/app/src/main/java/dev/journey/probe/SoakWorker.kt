@@ -1,6 +1,8 @@
 package dev.journey.probe
 
+import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.os.BatteryManager
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.DistanceRecord
@@ -62,6 +64,8 @@ class SoakWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 estKm?.let { "%.3f".format(it) } ?: "",
                 newest?.toString() ?: "",
                 lagSeconds?.toString() ?: "",
+                standbyBucket(ctx),
+                if (isCharging(ctx)) "yes" else "no",
                 "ok",
             ).joinToString(",")
 
@@ -73,10 +77,37 @@ class SoakWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             // periodic work and end the soak silently.
             SoakLog.append(
                 ctx,
-                "$sampledAt,,,,,,ERROR ${e::class.simpleName}: ${e.message?.replace(',', ';')}",
+                "$sampledAt,,,,,,${standbyBucket(ctx)},${if (isCharging(ctx)) "yes" else "no"}," +
+                    "ERROR ${e::class.simpleName}: ${e.message?.replace(',', ';')}",
             )
             Log.e("JourneyProbe", "soak sample failed", e)
             Result.success()
         }
+    }
+
+    companion object {
+
+        /**
+         * The app's own App Standby bucket. No permission needed for the no-arg form —
+         * only querying *another* package requires PACKAGE_USAGE_STATS.
+         *
+         * This is the whole point of the second soak: measure the bucket instead of
+         * inferring it from the size of the gaps between samples.
+         */
+        fun standbyBucket(ctx: Context): String {
+            val usm = ctx.getSystemService(UsageStatsManager::class.java) ?: return "?"
+            return when (val b = usm.appStandbyBucket) {
+                UsageStatsManager.STANDBY_BUCKET_ACTIVE -> "ACTIVE"
+                UsageStatsManager.STANDBY_BUCKET_WORKING_SET -> "WORKING_SET"
+                UsageStatsManager.STANDBY_BUCKET_FREQUENT -> "FREQUENT"
+                UsageStatsManager.STANDBY_BUCKET_RARE -> "RARE"
+                45 -> "RESTRICTED" // STANDBY_BUCKET_RESTRICTED, API 30; literal keeps minSdk 28
+                else -> "UNKNOWN($b)"
+            }
+        }
+
+        /** Charging exempts an app from much of the standby throttling. */
+        fun isCharging(ctx: Context): Boolean =
+            ctx.getSystemService(BatteryManager::class.java)?.isCharging ?: false
     }
 }

@@ -11,8 +11,10 @@ distance and the Landmarks along it.
 _Avoid_: Route, Track, Trail, Challenge
 
 **Landmark**:
-A named point on a Journey, positioned at a fixed distance from its start, that a user
-passes and is told about.
+A named point on a Journey, positioned at a fixed distance from its start. A Landmark is
+*reached* when an Expedition's distance passes it, and *read* once the user has seen its
+entry. A Landmark stays reached-but-unread for as long as the user goes without opening
+the app, so several can be waiting at once.
 _Avoid_: Milestone, Waypoint, Checkpoint
 
 **Expedition**:

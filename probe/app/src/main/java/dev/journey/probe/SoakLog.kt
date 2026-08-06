@@ -17,7 +17,7 @@ import java.io.File
 object SoakLog {
 
     private const val HEADER =
-        "sampled_at,steps_today,metres_today,est_km,newest_record_end,lag_seconds,note\n"
+        "sampled_at,steps_today,metres_today,est_km,newest_record_end,lag_seconds,bucket,charging,note\n"
 
     fun file(ctx: Context) = File(ctx.getExternalFilesDir(null), "soak.csv")
 
