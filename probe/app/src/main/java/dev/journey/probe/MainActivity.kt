@@ -97,6 +97,17 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             })
+            addView(button("Run TIGHT dedup test") {
+                clear()
+                lifecycleScope.launch {
+                    try {
+                        DedupTest.runTight(this@MainActivity) { emit(it) }
+                    } catch (e: Exception) {
+                        emit("TIGHT DEDUP TEST FAILED: ${e::class.simpleName}: ${e.message}")
+                        Log.e("JourneyProbe", "tight dedup test failed", e)
+                    }
+                }
+            })
             addView(button("Clean up injected steps") {
                 clear()
                 lifecycleScope.launch {

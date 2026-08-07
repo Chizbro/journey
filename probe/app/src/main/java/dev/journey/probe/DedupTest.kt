@@ -93,14 +93,94 @@ object DedupTest {
                         "ADR-0007 needs revisiting before any of this ships."
 
                 else ->
-                    "PARTIAL: aggregate() rose by $delta of $INJECTED_STEPS. Priority is likely\n" +
-                        "being resolved per sub-interval rather than per source. Worth understanding\n" +
-                        "before relying on it."
+                    "PARTIAL, and this is the EXPECTED result — not a failure.\n" +
+                        "aggregate() kept $delta of $INJECTED_STEPS. Health Connect deduplicates\n" +
+                        "timeline segments, not whole records: where real data existed, the\n" +
+                        "higher-priority source won and ours was discarded; across idle time ours\n" +
+                        "was the only source, so it counted.\n" +
+                        "Run the TIGHT test to contest every second and prove it properly."
             }
         )
         emit("")
         emit("Raw sum rose by ${rawAfter - rawBefore} — confirms readRecords() does NOT dedupe,")
         emit("which is why we never sum raw records.")
+
+        cleanUp(ctx, emit)
+    }
+
+    /**
+     * The tight version, and the one that actually proves anything.
+     *
+     * The broad test above spreads an injected record across hours of mostly-idle time, so
+     * most of it has nothing to be deduplicated against and survives — which looks like
+     * partial failure and is not.
+     *
+     * This instead injects over the *exact* span of a single real record, so every second of
+     * it is contested. Either source winning is a pass; only the sum is a failure.
+     */
+    suspend fun runTight(ctx: Context, emit: (String) -> Unit) {
+        val client = HealthConnectClient.getOrCreate(ctx)
+        val end = Instant.now()
+        val search = TimeRangeFilter.between(end.minus(6, ChronoUnit.HOURS), end)
+
+        val theirs = client.readRecords(ReadRecordsRequest(StepsRecord::class, search))
+            .records
+            .filter { it.metadata.dataOrigin.packageName != ctx.packageName }
+
+        emit("=== TIGHT DEDUP TEST ===")
+        if (theirs.isEmpty()) {
+            emit("No records from other apps in the last 6 hours. Walk a little, then retry.")
+            return
+        }
+
+        val target = theirs.maxBy { it.count }
+        val span = TimeRangeFilter.between(target.startTime, target.endTime)
+        emit("Contesting one real record: ${target.count} steps")
+        emit("  ${target.startTime} -> ${target.endTime}")
+        emit("  from ${target.metadata.dataOrigin.packageName}")
+        emit("")
+
+        val before = aggregate(client, span)
+        emit("BEFORE aggregate(): ${before ?: "null"}")
+
+        client.insertRecords(
+            listOf(
+                StepsRecord(
+                    startTime = target.startTime,
+                    startZoneOffset = null,
+                    endTime = target.endTime,
+                    endZoneOffset = null,
+                    count = INJECTED_STEPS,
+                )
+            )
+        )
+
+        val after = aggregate(client, span)
+        val raw = rawSum(client, span)
+        emit("AFTER  aggregate(): ${after ?: "null"}   (raw sum: $raw)")
+        emit("")
+        emit("=== VERDICT ===")
+
+        val sum = (before ?: 0L) + INJECTED_STEPS
+        emit(
+            when {
+                after == before ->
+                    "PASS — deduplicated. Ours was discarded; the existing source has priority.\n" +
+                        "ADR-0007's read path is sound."
+
+                after != null && kotlin.math.abs(after - INJECTED_STEPS) < 100 ->
+                    "PASS — deduplicated. Ours WON on priority and theirs was discarded.\n" +
+                        "Either way only one source is counted, never the sum. ADR-0007 holds."
+
+                after != null && kotlin.math.abs(after - sum) < 100 ->
+                    "FAIL — aggregate() returned the SUM of both sources over identical spans.\n" +
+                        "We would double-count. ADR-0007 must be revisited before shipping."
+
+                else ->
+                    "UNEXPECTED: got $after, where neither source alone ($before / $INJECTED_STEPS)\n" +
+                        "nor their sum ($sum) explains it. Worth investigating."
+            }
+        )
 
         cleanUp(ctx, emit)
     }

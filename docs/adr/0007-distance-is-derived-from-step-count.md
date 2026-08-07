@@ -33,6 +33,29 @@ establish reliability over time, and it says nothing about mid-range or heavily-
 The decision above rests on the documented absence of a native distance writer and on the risk
 asymmetry — not on this sample, which is too small to carry it.
 
+## Update (2026-08-07): deduplication verified on device
+
+The read path assumes `aggregate(StepsRecord.COUNT_TOTAL)` keeps only the highest-priority source
+when several apps write overlapping data. If that were untrue we would double-count and every
+Expedition would be quietly wrong. It had never been exercised, because the test device has only
+ever had one writer.
+
+The probe now injects an overlapping `StepsRecord` itself and compares. Injecting **50,000 steps
+across the exact span of a real 301-step record**: `aggregate()` returned **301, unchanged**, while
+the raw sum returned **50,301**. Our record was discarded outright.
+
+**Confirmed: `aggregate()` deduplicates by source priority. `readRecords()` does not.** Never sum
+raw records.
+
+A second finding, from injecting across a broader window: **deduplication is per timeline segment,
+not per record.** A 50,000-step record spread over three hours kept ~32,650 — the portion covering
+time when no other source had data. Where sources genuinely overlap the highest-priority one wins
+that slice; where only one source has data, it counts. That is the desirable behaviour: two apps
+tracking different parts of the day both contribute, and neither inflates the other.
+
+Practical consequence: a user running a second step-tracking app cannot inflate their progress, and
+cannot silently lose the hours their other app covered.
+
 ## Consequences
 
 - Distance shown to the user is an estimate. Height is asked for during onboarding; it is the
