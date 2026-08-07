@@ -247,10 +247,6 @@ class MainActivity : ComponentActivity() {
             }
             emit("")
 
-            if (metres != null && steps != null && steps > 0) {
-                emit("Measured stride: %.3f m/step".format(metres / steps))
-                emit("(Compare with the estimate above. Typical walking stride is 0.6-0.8 m.)")
-            }
             emit("")
 
             emit("=== DAY BY DAY ===")

@@ -63,7 +63,8 @@ cannot silently lose the hours their other app covered.
 - Running stride is longer than walking stride and we do not distinguish them. Accepted.
 - Error is roughly +/-10-20%. Over a 2,900 km Journey that is hundreds of kilometres, and users
   with a watch or health app may notice the discrepancy. This is the price of a signal that
-  always exists.
-- **Later refinement, not now:** if `DistanceRecord` ever does appear, a true stride can be
-  derived from the distance-to-steps ratio and applied silently. Guard it by rejecting values
-  outside ~0.5-1.0 m, so a cycling app writing distance cannot corrupt the calibration.
+  always exists, and it is accepted.
+- **Deriving a truer stride from `DistanceRecord` was considered and rejected.** It would mean
+  trusting a signal we have already ruled out: `DistanceRecord` carries no modality tag, so it can
+  include cycling, and a step-tracking app's distance is itself steps multiplied by an assumed
+  stride. Height remains the only input.

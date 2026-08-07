@@ -102,8 +102,7 @@ Needs real steps in the window to overlap with — walk for a few minutes first,
 tell you there is nothing to test against.
 
 Note this tests **steps**, not distance. Distance dedup is irrelevant to us: ADR-0007 means
-the app never reads `DistanceRecord`. A GPS tracker like OpenTracks cannot exercise this
-path at all, since without `ACTIVITY_RECOGNITION` it cannot write steps.
+the app never reads `DistanceRecord`.
 
 ## Height
 
