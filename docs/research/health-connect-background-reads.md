@@ -1,5 +1,21 @@
 # Health Connect: background reads, change detection, and on-foot distance
 
+> # ⚠️ SECTION 4 IS SUPERSEDED — DO NOT ACT ON IT
+>
+> This document recommended reading **`DistanceRecord`**. **That recommendation is wrong and was
+> reversed.** The app reads **`StepsRecord`** and derives distance from stride length.
+>
+> Two of its own flagged caveats turned out to be decisive: nothing writes distance natively, and
+> `DistanceRecord` carries no modality tag so it can include cycling. On-device testing found
+> **zero `DistanceRecord` across 30 days and ~12,000 steps** on a Pixel 9 Pro.
+>
+> **See [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md). It is the authority; this
+> document is not.**
+>
+> Everything else here — the background-read permission and its version floors, rate limits, the
+> absence of any subscription API, the history permission, Play requirements — **remains valid and
+> is still relied upon** by [ADR-0005](../adr/0005-android-first.md).
+
 **Date of access: 2026-08-03.** All sources are primary: `developer.android.com`, `support.google.com` (Play Console Help), AndroidX source on the `androidx/androidx` mirror, and AOSP source on `android.googlesource.com`. No blog posts, Stack Overflow, or Medium were used as authority.
 
 ---
@@ -21,7 +37,11 @@
 | Play Store | Health apps declaration + Data safety + privacy policy, all required for closed/open/production tracks. **Not** required for local `adb` debug builds. |
 | Dogfooding | Zero Play Console involvement for a locally installed debug build. |
 
-**Recommended approach:** `PeriodicWorkRequest` at 15 minutes with `READ_HEALTH_DATA_IN_BACKGROUND`, calling `aggregate(DistanceRecord.DISTANCE_TOTAL)` over "since journey start" (or per-day buckets), not `readRecords`. Use the Changes API only as a secondary optimisation if quota ever becomes a problem — it does not buy you push, and it adds token-expiry bookkeeping. See §3 and §4 for why `aggregate` is the important choice.
+**Recommended approach:** `PeriodicWorkRequest` at 15 minutes with `READ_HEALTH_DATA_IN_BACKGROUND`, calling **`aggregate(StepsRecord.COUNT_TOTAL)`** over "since journey start" (or per-day buckets), not `readRecords`. Use the Changes API only as a secondary optimisation if quota ever becomes a problem — it does not buy you push, and it adds token-expiry bookkeeping. See §3 and §4 for why `aggregate` is the important choice.
+
+> **Corrected 2026-08-07.** This line originally said `aggregate(DistanceRecord.DISTANCE_TOTAL)`. We
+> read steps, not distance — see [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md). The
+> `aggregate`-not-`readRecords` point is unaffected and is the important part.
 
 ---
 
@@ -302,9 +322,19 @@ This is the mobile replacement for the deprecated Google Fit Android API ([Recor
 
 ## 4. `DistanceRecord` vs `StepsRecord`, and the deduplication question
 
+> ## ⚠️ THIS SECTION'S RECOMMENDATION IS WRONG
+>
+> It concludes "`DistanceRecord` is the correct read". **We read `StepsRecord`.** The reference
+> material below (types, permissions, aggregate metrics, and the deduplication findings) is
+> accurate and still used — only the *recommendation* was reversed.
+>
+> **Authority: [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md).**
+
 ### Which to read
 
-**`DistanceRecord`.** It is the literal answer to "how far did the user travel on foot", in metres. Its KDoc ([`DistanceRecord.kt`](https://raw.githubusercontent.com/androidx/androidx/androidx-main/health/connect/connect-client/src/main/java/androidx/health/connect/client/records/DistanceRecord.kt)):
+> **REVERSED.** The answer below is `DistanceRecord`. The actual answer is `StepsRecord`.
+
+~~**`DistanceRecord`.** It is the literal answer to "how far did the user travel on foot", in metres.~~ **Wrong — we read `StepsRecord`.** Kept only for the type reference below. Its KDoc ([`DistanceRecord.kt`](https://raw.githubusercontent.com/androidx/androidx/androidx-main/health/connect/connect-client/src/main/java/androidx/health/connect/client/records/DistanceRecord.kt)):
 
 > "Captures distance travelled by the user since the last reading. The total distance over an interval can be calculated by adding together all the values during the interval."
 
@@ -318,11 +348,22 @@ This is the mobile replacement for the deprecated Google Fit Android API ([Recor
 
 ([Health Connect data types](https://developer.android.com/health-and-fitness/health-connect/data-types))
 
-Steps are the wrong primitive for distance — converting steps to metres requires a stride-length estimate we do not have and would be a fabricated number. `DistanceRecord` is the correct read.
+~~Steps are the wrong primitive for distance — converting steps to metres requires a stride-length estimate we do not have and would be a fabricated number. `DistanceRecord` is the correct read.~~
 
-> ⚠️ **Ambiguity, flagged.** Neither the data-types page nor the DistanceRecord KDoc says anything about **modality**. `DistanceRecord` is a generic distance-travelled type and is used by cycling, swimming and rowing apps too. Health Connect does not tag a `DistanceRecord` as "on foot". If ADR 0001 ("on-foot distance only") is to be honoured strictly, `DistanceRecord` alone cannot enforce it. Options — none of them documented as canonical — would be to cross-reference `ExerciseSessionRecord` for the exercise type in overlapping intervals, or to accept all distance and treat this as a known limitation. **This is an unresolved design question, not a documented fact.**
+> **STRUCK, 2026-08-07.** This conclusion was wrong on both counts. The stride-length estimate is
+> obtainable (height x 0.414), and `DistanceRecord` is not merely a worse read — on a bare device it
+> does not exist at all. **Read `StepsRecord`.**
+> See [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md).
+
+Both caveats below were flagged as open questions. **Both were later confirmed, and together they
+reversed the recommendation above.**
+
+> ⚠️ **Ambiguity, flagged — LATER CONFIRMED, and decisive.** Neither the data-types page nor the DistanceRecord KDoc says anything about **modality**. `DistanceRecord` is a generic distance-travelled type and is used by cycling, swimming and rowing apps too. Health Connect does not tag a `DistanceRecord` as "on foot". If ADR 0001 ("on-foot distance only") is to be honoured strictly, `DistanceRecord` alone cannot enforce it. Options — none of them documented as canonical — would be to cross-reference `ExerciseSessionRecord` for the exercise type in overlapping intervals, or to accept all distance and treat this as a known limitation. **This is an unresolved design question, not a documented fact.**
 >
-> ⚠️ **Practical caveat, flagged.** Health Connect's *native on-device* tracking writes **steps**, not distance ([Track steps](https://developer.android.com/health-and-fitness/health-connect/features/steps)). There is no equivalent native on-device distance writer documented. So on a device with no fitness app installed, `DistanceRecord` may simply be empty while `StepsRecord` is populated. **Verify on the dogfooding device before committing to distance-only.** A fallback to steps (with an explicit, user-visible stride assumption) may be needed.
+> ⚠️ **Practical caveat, flagged — LATER CONFIRMED on hardware.** Health Connect's *native on-device* tracking writes **steps**, not distance ([Track steps](https://developer.android.com/health-and-fitness/health-connect/features/steps)). There is no equivalent native on-device distance writer documented. So on a device with no fitness app installed, `DistanceRecord` may simply be empty while `StepsRecord` is populated. **Verify on the dogfooding device before committing to distance-only.** A fallback to steps (with an explicit, user-visible stride assumption) may be needed.
+>
+> **Verified 2026-08-05/06:** zero `DistanceRecord` from any source across 30 days and ~12,000 steps
+> on a Pixel 9 Pro (Android 16, SDK Extension 22). The "fallback" is the design.
 
 ### Deduplication — the definitive answer
 
@@ -346,7 +387,13 @@ And the explicit steer from the read guide ([Read raw data](https://developer.an
 
 > "If you're interested in obtaining calculated data such as averages and totals, it is recommended to use aggregation… The aggregation API also contains logic to handle duplicate records, and lessens the chances of rate limiting."
 
-**Conclusion: if we call `aggregate(DistanceRecord.DISTANCE_TOTAL)`, Health Connect deduplicates for us, using the priority order the user configured in the Health Connect app. If we call `readRecords(DistanceRecord::class)` and sum, we get raw overlapping records from every writing app and we double-count.** This is the single most important implementation decision in this document.
+**Conclusion: if we call `aggregate(StepsRecord.COUNT_TOTAL)`, Health Connect deduplicates for us, using the priority order the user configured in the Health Connect app. If we call `readRecords(StepsRecord::class)` and sum, we get raw overlapping records from every writing app and we double-count.** This is the single most important implementation decision in this document.
+
+> **Corrected 2026-08-07** (originally written with `DistanceRecord`; we read steps). The dedup
+> finding itself holds and was **verified on device** — injecting 50,000 steps over the exact span of
+> a real 301-step record left `aggregate()` returning 301 while the raw sum returned 50,301. Dedup
+> also operates per timeline segment rather than per record. See
+> [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md).
 
 The priority order is **user-controlled only** — "Only end users can alter these priority lists." There is no API to set it, and there is no documented API on the AndroidX client to *read* it either (the platform has a `FetchDataOriginsPriorityOrderResponse`, but it is `@SystemApi`/hidden, so it is not available to a normal app).
 
@@ -531,8 +578,8 @@ Things I could not settle from primary sources, stated plainly rather than guess
 1. **Play review turnaround time for health permissions.** No SLA or typical duration published anywhere I could find on developer.android.com or Play Console Help. Unknown.
 2. **Whether internal-testing releases require the Health apps declaration.** Inferred exempt from parallel wording with the Data safety page, but never stated. See §6.
 3. **Exact production rate-limit values.** The AOSP numbers in §2 are `*_DEFAULT_FLAG_VALUE` constants from `main` and are DeviceConfig-overridable. They are the right order of magnitude and Google deliberately does not publish them. Do not hard-code assumptions; always catch and back off.
-4. **Whether `DistanceRecord` can be constrained to on-foot travel.** Health Connect does not tag distance with a modality. Cycling/swimming/rowing apps write `DistanceRecord` too. No documented mechanism to filter to walking/running. Cross-referencing `ExerciseSessionRecord` is a plausible but undocumented workaround. **Unresolved, and it bears directly on ADR 0001.**
-5. **Whether `DistanceRecord` will be populated at all on a bare device.** Health Connect's native on-device tracking writes *steps*, not distance ([Track steps](https://developer.android.com/health-and-fitness/health-connect/features/steps) documents no native distance writer). If no fitness app is installed, distance may be empty. **Must be verified empirically on the dogfooding device — this is the first thing to test.**
+4. ~~**Whether `DistanceRecord` can be constrained to on-foot travel.**~~ **RESOLVED 2026-08-05: it cannot.** Health Connect does not tag distance with a modality, and cycling/swimming/rowing apps write `DistanceRecord` too. This is one of the two reasons we read `StepsRecord` instead — steps cannot come from a bike or a pool, so ADR-0001's on-foot rule is enforced by construction. See [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md).
+5. ~~**Whether `DistanceRecord` will be populated at all on a bare device.**~~ **RESOLVED 2026-08-05/06: it is not.** Zero `DistanceRecord` from any source across 30 days and ~12,000 steps on a Pixel 9 Pro. This was the other reason for reading steps. See [ADR-0007](../adr/0007-distance-is-derived-from-step-count.md).
 6. **Reading the user's data-source priority order.** The dedup depends on it, but there is no documented public AndroidX API to read it (`FetchDataOriginsPriorityOrderResponse` exists in AOSP but is `@SystemApi`). We cannot show the user which source won, or explain a discrepancy.
 7. **Real-world background-read latency under Doze.** The documented bucket limits (§2) give worst cases, but actual observed latency for a user who opens the app daily is not something the docs commit to. Measure it during dogfooding.
 8. **Documentation inconsistencies flagged, both worth re-checking later:**
