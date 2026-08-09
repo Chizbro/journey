@@ -2,9 +2,9 @@ package dev.journey.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,14 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,108 +33,151 @@ import dev.journey.domain.Landmark
  *
  * Everything the app shows is a view onto this line. Ahead of you, dimmed and unreachable, with
  * the next one carrying the countdown. At your position, how far you have come. Behind you,
- * everything reached — readable, with unread ones marked.
+ * everything reached — readable, unread ones marked.
  *
- * Spacing between Landmarks is proportional to the real distance between them, so a long gap
- * looks long. The countdown is the thing that carries the ordinary day, so it has to be felt.
+ * Spacing between Landmarks is proportional to real distance, so a long gap looks long. The
+ * countdown carries the ordinary day, so it has to be felt rather than read.
  */
 
-/** Position on the Journey, in metres travelled, plus which Landmarks have been read. */
 data class TrailState(
     val journey: Journey,
     val metresTravelled: Long,
-    val readLandmarkIds: Set<String>,
+    val readIds: Set<String>,
 ) {
-    val next: Landmark? get() = journey.nextAfter(metresTravelled)
-    val metresToNext: Long? get() = next?.let { it.metresFromStart - metresTravelled }
-    val reached: List<Landmark> get() = journey.reachedAt(metresTravelled)
-    val unread: List<Landmark> get() = reached.filter { it.id !in readLandmarkIds }
+    /** Progress stops at the end. Walking past the terminus is not a thing that happens. */
+    val position: Long get() = metresTravelled.coerceAtMost(journey.totalMetres)
+
+    val next: Landmark? get() = journey.nextAfter(position)
+    val metresToNext: Long? get() = next?.let { it.metresFromStart - position }
+    val reached: List<Landmark> get() = journey.reachedAt(position)
     val isComplete: Boolean get() = journey.isComplete(metresTravelled)
+    val endingUnread: Boolean get() = isComplete && journey.ending.id !in readIds
+
+    /** Everything waiting to be read, in the order it was reached. Drives the sequential reveal. */
+    val unread: List<Entry>
+        get() = buildList {
+            addAll(reached.reversed().filter { it.id !in readIds }.map { it.toEntry() })
+            if (endingUnread) add(journey.ending.toEntry())
+        }
 }
 
-private val Ahead = Color(0xFF6B6B6B)
-private val Here = Color(0xFFE8B33C)
-private val Behind = Color(0xFFE6E1D8)
-private val Unread = Color(0xFFE8B33C)
-
 @Composable
-fun TrailScreen(state: TrailState, onOpenLandmark: (Landmark) -> Unit) {
-    Surface(color = Color(0xFF14161A), modifier = Modifier.fillMaxSize()) {
+fun TrailScreen(state: TrailState, onOpen: (Entry) -> Unit, onOpenAbout: () -> Unit) {
+    Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 32.dp),
+            contentPadding = PaddingValues(vertical = 32.dp),
         ) {
-            item { Header(state) }
+            item { Header(state, onOpenAbout) }
 
-            // The line runs the way you walk it: what is ahead is above, what is behind is below.
-            val ahead = state.journey.landmarks.filter { it.metresFromStart > state.metresTravelled }
-            itemsIndexed(ahead.reversed()) { index, landmark ->
-                val gapBelow = gapTo(state, landmark, ahead.reversed(), index)
-                LandmarkRow(
-                    landmark = landmark,
-                    reached = false,
-                    unread = false,
-                    isNext = landmark.id == state.next?.id,
-                    metresToHere = landmark.metresFromStart - state.metresTravelled,
-                    gapMetres = gapBelow,
-                    onClick = null,
-                )
+            if (state.isComplete) {
+                item { Terminus(state, onOpen) }
+            } else {
+                // The line runs the way you walk it: ahead is above, behind is below.
+                val ahead = state.journey.landmarks.filter { it.metresFromStart > state.position }
+                    .reversed()
+                itemsIndexed(ahead) { index, landmark ->
+                    LandmarkRow(
+                        landmark = landmark,
+                        reached = false,
+                        unread = false,
+                        isNext = landmark.id == state.next?.id,
+                        metresToHere = landmark.metresFromStart - state.position,
+                        gapMetres = gapBelow(state, ahead, index),
+                        onClick = null,
+                    )
+                }
+                item { YouAreHere(state) }
             }
-
-            item { YouAreHere(state) }
 
             itemsIndexed(state.reached) { _, landmark ->
                 LandmarkRow(
                     landmark = landmark,
                     reached = true,
-                    unread = landmark.id !in state.readLandmarkIds,
+                    unread = landmark.id !in state.readIds,
                     isNext = false,
                     metresToHere = null,
                     gapMetres = null,
-                    onClick = { onOpenLandmark(landmark) },
+                    onClick = { onOpen(landmark.toEntry()) },
                 )
             }
         }
     }
 }
 
+/** Tapping the header opens the overview — a view of the whole line rather than a point on it. */
 @Composable
-private fun Header(state: TrailState) {
-    Column(Modifier.padding(bottom = 40.dp)) {
-        Text(
-            state.journey.name,
-            color = Behind,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Medium,
-        )
+private fun Header(state: TrailState, onOpenAbout: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenAbout)
+            .padding(bottom = 40.dp)
+    ) {
+        Text(state.journey.name, color = Behind, fontSize = 28.sp, fontWeight = FontWeight.Medium)
         Text(state.journey.subtitle, color = Ahead, fontSize = 14.sp)
+        Spacer(Modifier.height(6.dp))
+        Text("by ${state.journey.author.name} · about this route", color = Ahead, fontSize = 12.sp)
     }
 }
 
-/** The marker at your position, and the countdown that carries the uneventful days. */
+/** Your position, and the countdown that carries the uneventful days. */
 @Composable
 private fun YouAreHere(state: TrailState) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(14.dp).clip(CircleShape).background(Here))
+        }
+        Spacer(Modifier.width(16.dp))
+        Column {
+            Text(
+                "%.1f km walked".format(state.position / 1000.0),
+                color = Here,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            val toNext = state.metresToNext
+            Text(
+                if (toNext != null) "%.1f km to %s".format(toNext / 1000.0, state.next?.name)
+                else "Nothing ahead but the last of it.",
+                color = Ahead,
+                fontSize = 14.sp,
+            )
+        }
+    }
+}
+
+/**
+ * The end of the line. No celebration — the ending is authored per Journey and is simply the
+ * last thing there is to read.
+ */
+@Composable
+private fun Terminus(state: TrailState, onOpen: (Entry) -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onOpen(state.journey.ending.toEntry()) }
+            .padding(vertical = 8.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(14.dp).clip(CircleShape).background(Here))
+                Box(Modifier.width(18.dp).height(3.dp).background(Here))
             }
             Spacer(Modifier.width(16.dp))
             Column {
                 Text(
-                    "%.1f km walked".format(state.metresTravelled / 1000.0),
-                    color = Here,
+                    state.journey.ending.title,
+                    color = Behind,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
                 )
-                val toNext = state.metresToNext
                 Text(
-                    when {
-                        state.isComplete -> "You have reached the end."
-                        toNext != null -> "%.1f km to %s".format(toNext / 1000.0, state.next?.name)
-                        else -> "Nothing ahead but the last of it."
-                    },
-                    color = Ahead,
+                    if (state.endingUnread) "New — tap to read"
+                    else "%.0f km walked".format(state.position / 1000.0),
+                    color = if (state.endingUnread) Here else Ahead,
                     fontSize = 14.sp,
                 )
             }
@@ -168,7 +209,7 @@ private fun LandmarkRow(
                     Modifier
                         .size(if (unread) 12.dp else 8.dp)
                         .clip(CircleShape)
-                        .background(if (unread) Unread else if (reached) Behind else Ahead)
+                        .background(if (unread) Here else if (reached) Behind else Ahead)
                 )
             }
             Spacer(Modifier.width(16.dp))
@@ -186,7 +227,7 @@ private fun LandmarkRow(
                     }
                 }
                 when {
-                    unread -> Text("New — tap to read", color = Unread, fontSize = 13.sp)
+                    unread -> Text("New — tap to read", color = Here, fontSize = 13.sp)
                     reached -> Text(landmark.standfirst, color = Ahead, fontSize = 13.sp)
                     isNext && metresToHere != null ->
                         Text("%.1f km ahead".format(metresToHere / 1000.0), color = Ahead, fontSize = 13.sp)
@@ -197,8 +238,8 @@ private fun LandmarkRow(
 }
 
 /**
- * The connecting line. Its height is proportional to real distance, so the 16 km of nothing
- * between Heddon and the Portgate looks like 16 km of nothing.
+ * The connecting line, its height proportional to real distance — so the 16 km of nothing between
+ * Heddon and the Portgate looks like 16 km of nothing.
  */
 @Composable
 private fun TrailSegment(gapMetres: Long) {
@@ -210,13 +251,8 @@ private fun TrailSegment(gapMetres: Long) {
     }
 }
 
-private fun gapTo(
-    state: TrailState,
-    landmark: Landmark,
-    ordered: List<Landmark>,
-    index: Int,
-): Long {
+private fun gapBelow(state: TrailState, ordered: List<Landmark>, index: Int): Long {
     val below = ordered.getOrNull(index + 1)
-    return if (below != null) landmark.metresFromStart - below.metresFromStart
-    else landmark.metresFromStart - state.metresTravelled
+    return if (below != null) ordered[index].metresFromStart - below.metresFromStart
+    else ordered[index].metresFromStart - state.position
 }
