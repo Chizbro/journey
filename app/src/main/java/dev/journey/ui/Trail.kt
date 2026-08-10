@@ -62,7 +62,12 @@ data class TrailState(
 }
 
 @Composable
-fun TrailScreen(state: TrailState, onOpen: (Entry) -> Unit, onOpenAbout: () -> Unit) {
+fun TrailScreen(
+    state: TrailState,
+    onOpen: (Entry) -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
@@ -99,6 +104,20 @@ fun TrailScreen(state: TrailState, onOpen: (Entry) -> Unit, onOpenAbout: () -> U
                     metresToHere = null,
                     gapMetres = null,
                     onClick = { onOpen(landmark.toEntry()) },
+                )
+            }
+
+            // Below the start of the line, where nothing else competes for attention.
+            item {
+                Spacer(Modifier.height(48.dp))
+                Text(
+                    "Settings and backup",
+                    color = Ahead,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenSettings)
+                        .padding(vertical = 12.dp),
                 )
             }
         }
