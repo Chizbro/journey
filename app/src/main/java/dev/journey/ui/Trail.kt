@@ -67,12 +67,29 @@ fun TrailScreen(
     onOpen: (Entry) -> Unit,
     onOpenAbout: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** Shown above everything when the app cannot actually accrue. Never fail silently here. */
+    problem: String? = null,
 ) {
     Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
             contentPadding = PaddingValues(vertical = 32.dp),
         ) {
+            problem?.let {
+                item {
+                    Text(
+                        it,
+                        color = Here,
+                        fontSize = 14.sp,
+                        lineHeight = 21.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onOpenSettings)
+                            .padding(bottom = 24.dp),
+                    )
+                }
+            }
+
             item { Header(state, onOpenAbout) }
 
             if (state.isComplete) {

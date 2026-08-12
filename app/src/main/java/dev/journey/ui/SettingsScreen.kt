@@ -43,6 +43,9 @@ fun SettingsScreen(
     onImport: () -> Unit,
     onClose: () -> Unit,
     message: String?,
+    diagnostics: String?,
+    onDiagnose: () -> Unit,
+    onFixPermissions: () -> Unit,
 ) {
     var height by remember { mutableStateOf(state.heightCm.toString()) }
     val cm = height.toIntOrNull()
@@ -117,6 +120,24 @@ fun SettingsScreen(
             Text("Sync", color = Ahead, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(8.dp))
             SyncStatus(state)
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Why isn't it updating?",
+                color = Here,
+                fontSize = 16.sp,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onDiagnose).padding(vertical = 12.dp),
+            )
+            Text(
+                "Re-request Health Connect permissions",
+                color = Here,
+                fontSize = 16.sp,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onFixPermissions).padding(vertical = 12.dp),
+            )
+            diagnostics?.let {
+                Spacer(Modifier.height(12.dp))
+                Text(it, color = Body, fontSize = 13.sp, lineHeight = 20.sp)
+            }
 
             Spacer(Modifier.height(40.dp))
             Text(

@@ -126,6 +126,44 @@ class SyncEngine(
         return result[StepsRecord.COUNT_TOTAL] ?: 0L
     }
 
+    /**
+     * Everything the sync decided, in readable form.
+     *
+     * "It isn't updating" has at least four causes that look identical from the Trail — missing
+     * background permission, steps too recent to credit, steps predating the Expedition, or a
+     * sync that never ran. This makes them tell themselves apart.
+     */
+    suspend fun diagnose(now: Instant = Instant.now()): String {
+        val state = store.load() ?: return "No Expedition yet."
+        val granted = runCatching {
+            HealthConnectClient.getOrCreate(context)
+                .permissionController.getGrantedPermissions()
+        }.getOrDefault(emptySet())
+
+        val missing = REQUIRED_PERMISSIONS - granted
+        val newest = newestRecordEnd(state.syncedThrough, now)
+        val horizon = creditHorizon(state.syncedThrough, now)
+        val pending = runCatching { readSteps(state.syncedThrough, now) }.getOrDefault(-1)
+        val creditable = runCatching { readSteps(state.syncedThrough, horizon) }.getOrDefault(-1)
+
+        return buildString {
+            appendLine("Health Connect: ${HealthConnectClient.getSdkStatus(context)}")
+            appendLine(if (missing.isEmpty()) "Permissions: all granted" else "MISSING: $missing")
+            appendLine()
+            appendLine("Expedition began: ${state.startedAt}")
+            appendLine("Credited through: ${state.syncedThrough}")
+            appendLine("Newest step record: ${newest ?: "none since watermark"}")
+            appendLine("Will credit up to: $horizon")
+            appendLine()
+            appendLine("Steps since watermark: $pending")
+            appendLine("  of which creditable now: $creditable")
+            appendLine("  held back as too recent: ${(pending - creditable).coerceAtLeast(0)}")
+            appendLine()
+            appendLine("Stride: %.3f m/step (height ${state.heightCm} cm)".format(state.metresPerStep))
+            appendLine("Credited so far: %.2f km".format(state.metresCredited / 1000.0))
+        }
+    }
+
     private suspend fun hasPermissions(): Boolean = runCatching {
         HealthConnectClient.getOrCreate(context)
             .permissionController

@@ -5,7 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -14,6 +14,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.journey.content.HADRIANS_WALL
 import dev.journey.data.ExpeditionState
 import dev.journey.data.ExpeditionStore
@@ -30,11 +33,15 @@ private sealed interface Screen {
 }
 
 /**
- * Opening the app always syncs before it renders.
+ * The app syncs every time it comes to the foreground.
  *
- * That is what makes a lazy background poll acceptable (ADR-0005): the background worker exists
- * only to catch arrivals while the app is closed, so however far Android defers it, what the user
- * sees when they look is correct.
+ * That is what makes a lazy background poll acceptable (ADR-0005): the worker exists only to catch
+ * arrivals while the app is closed, so however far Android defers it, what the user sees when they
+ * look is correct.
+ *
+ * It must be ON_RESUME rather than a one-shot effect. Walking with the app already open in the
+ * background and then returning to it is the single most likely way a user checks their progress,
+ * and it does not re-run onCreate.
  */
 class MainActivity : ComponentActivity() {
 
@@ -51,10 +58,23 @@ class MainActivity : ComponentActivity() {
             var granted by remember { mutableStateOf(false) }
             var screen by remember { mutableStateOf<Screen>(Screen.Trail) }
             var message by remember { mutableStateOf<String?>(null) }
+            var diagnostics by remember { mutableStateOf<String?>(null) }
+
+            suspend fun refresh() {
+                granted = runCatching {
+                    HealthConnectClient.getOrCreate(context)
+                        .permissionController
+                        .getGrantedPermissions()
+                        .containsAll(SyncEngine.REQUIRED_PERMISSIONS)
+                }.getOrDefault(false)
+                if (store.load() != null && granted) runCatching { engine.sync() }
+                state = store.load()
+                loaded = true
+            }
 
             val permissionLauncher = rememberLauncherForActivityResult(
                 PermissionController.createRequestPermissionResultContract()
-            ) { result -> granted = result.containsAll(SyncEngine.REQUIRED_PERMISSIONS) }
+            ) { scope.launch { refresh() } }
 
             val exportLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.CreateDocument("application/json")
@@ -66,9 +86,7 @@ class MainActivity : ComponentActivity() {
                         message = "Nothing to export yet."
                     } else {
                         runCatching {
-                            context.contentResolver.openOutputStream(uri)?.use {
-                                it.write(text.toByteArray())
-                            }
+                            context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                         }.onSuccess { message = "Exported. Keep it somewhere off this phone." }
                             .onFailure { message = "Export failed: ${it.message}" }
                     }
@@ -93,20 +111,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Load, check permissions, then sync — in that order, every time the app opens.
-            LaunchedEffect(Unit) {
-                granted = runCatching {
-                    HealthConnectClient.getOrCreate(context)
-                        .permissionController
-                        .getGrantedPermissions()
-                        .containsAll(SyncEngine.REQUIRED_PERMISSIONS)
-                }.getOrDefault(false)
-                state = store.load()
-                if (state != null && granted) {
-                    runCatching { engine.sync() }
-                    state = store.load()
+            // Sync on every resume, not once on create.
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) scope.launch { refresh() }
                 }
-                loaded = true
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
             if (!loaded) return@setContent
@@ -137,13 +149,13 @@ class MainActivity : ComponentActivity() {
                 is Screen.Trail -> TrailScreen(
                     state = trail,
                     onOpen = { entry ->
-                        // Opening an entry is what marks it read, so the unread queue drains as
-                        // it is actually read rather than when the app happens to notice.
                         scope.launch { state = store.update { it.copy(readIds = it.readIds + entry.id) } }
                         screen = Screen.Reading(entry)
                     },
                     onOpenAbout = { screen = Screen.About },
                     onOpenSettings = { screen = Screen.Settings },
+                    problem = if (granted) null else
+                        "Not accruing — Health Connect access is incomplete. Tap to fix.",
                 )
 
                 is Screen.About -> AboutScreen(
@@ -158,8 +170,11 @@ class MainActivity : ComponentActivity() {
                     },
                     onExport = { exportLauncher.launch("journey-${HADRIANS_WALL.id}.json") },
                     onImport = { importLauncher.launch(arrayOf("application/json", "*/*")) },
-                    onClose = { screen = Screen.Trail; message = null },
+                    onClose = { screen = Screen.Trail; message = null; diagnostics = null },
                     message = message,
+                    diagnostics = diagnostics,
+                    onDiagnose = { scope.launch { diagnostics = engine.diagnose() } },
+                    onFixPermissions = { permissionLauncher.launch(SyncEngine.REQUIRED_PERMISSIONS) },
                 )
 
                 is Screen.Reading -> {
