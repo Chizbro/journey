@@ -72,24 +72,23 @@ class SyncEngine(
      * cannot tell a slow write apart from a user sitting still, so calibrating against it would
      * be calibrating against the wrong hazard.
      *
-     * Two rules instead:
+     * So: **credit up to the newest record we can actually see, and no further.** If we can read
+     * a record ending at T, everything up to T has been written. Anything covering a later period
+     * arrives above the watermark and is picked up next time. Nothing is skipped and nothing waits.
      *
-     *  1. **Stay [SETTLE] behind the newest record we can actually see.** Anchoring on observed
-     *     data assumes nothing about write lag and adapts to whatever the device does. If a
-     *     record lands out of order below the newest one, there is a window to catch it.
+     * An earlier version held back a further twenty minutes below the newest record, to catch a
+     * record landing *out of order* beneath it, with a two-hour wall-clock floor so the tail of a
+     * walk was not stranded. That combination cost hours: stop walking, the newest record stops
+     * moving, and the last stretch is not credited until the floor sweeps past it. Out-of-order
+     * writes need a second writing app — Health Connect's own recorder batches in order, about
+     * once a minute — so it was hours of latency bought against a case that cannot currently
+     * arise. **Revisit if a second source ever writes steps on this device.**
      *
-     *  2. **But always credit anything older than [ALWAYS_TRUST_AFTER].** Rule 1 alone strands
-     *     the tail of every walk: stop walking and the newest record stops moving, so the last
-     *     twenty minutes stay uncredited until the next walk. Nothing legitimately arrives hours
-     *     late, so past that point wall-clock is trustworthy.
-     *
-     * With no records visible at all, only rule 2 applies — there is nothing to anchor to.
+     * With no records visible there is nothing to anchor to, so the watermark creeps forward on
+     * wall-clock instead. Nothing is lost by that: the range holds no data by definition.
      */
-    private suspend fun creditHorizon(from: Instant, now: Instant): Instant {
-        val floor = now.minus(ALWAYS_TRUST_AFTER)
-        val newest = newestRecordEnd(from, now) ?: return floor
-        return maxOf(newest.minus(SETTLE), floor)
-    }
+    private suspend fun creditHorizon(from: Instant, now: Instant): Instant =
+        newestRecordEnd(from, now) ?: now.minus(IDLE_ADVANCE)
 
     /**
      * A raw read, used only to find the newest visible record's end — never summed. Totals come
@@ -172,11 +171,11 @@ class SyncEngine(
     }.getOrDefault(false)
 
     companion object {
-        /** Slack left below the newest visible record, for anything arriving out of order. */
-        private val SETTLE: Duration = Duration.ofMinutes(20)
-
-        /** Past this, wall-clock is trusted — otherwise the tail of a walk never gets credited. */
-        private val ALWAYS_TRUST_AFTER: Duration = Duration.ofHours(2)
+        /**
+         * How far the watermark creeps when there are no records to anchor to. Only reached
+         * when the range is empty, so it can never skip anything.
+         */
+        private val IDLE_ADVANCE: Duration = Duration.ofMinutes(30)
 
         val REQUIRED_PERMISSIONS = setOf(
             HealthPermission.getReadPermission(StepsRecord::class),
