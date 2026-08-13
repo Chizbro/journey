@@ -1,0 +1,4 @@
+# A blueprint that brings its own image rather than extending box's.
+# Nothing here is box's base: box has to add its own plumbing on top.
+image = "Dockerfile"
+allow = [".gradle.org", "dl.google.com", "repo1.maven.org"]
