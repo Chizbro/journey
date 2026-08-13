@@ -1,0 +1,18 @@
+# What box needs in order to run an Agent on this repo.
+#
+# box shows this to the Operator before it acts on any of it. Nothing here
+# is granted because it is written here — the Dockerfile is built only once
+# approved, and each domain is allowed one at a time, by hand.
+
+image = "Dockerfile"
+
+# Gradle downloads its world on every build, and a Box is default-deny.
+allow = [
+  ".gradle.org",           # the wrapper distribution, and the plugin portal
+  "dl.google.com",         # the Android Gradle plugin and Google's maven repo
+  "repo1.maven.org",       # Maven Central
+  "repo.maven.apache.org", # where Central redirects
+]
+
+# No start command and no port on purpose: this is an Android app, so there
+# is nothing for box to serve. See the note at the end of the Dockerfile.
