@@ -46,6 +46,7 @@ fun SettingsScreen(
     diagnostics: String?,
     onDiagnose: () -> Unit,
     onFixPermissions: () -> Unit,
+    onTestNotification: () -> Unit,
 ) {
     var height by remember { mutableStateOf(state.heightCm.toString()) }
     val cm = height.toIntOrNull()
@@ -127,6 +128,12 @@ fun SettingsScreen(
                 color = Here,
                 fontSize = 16.sp,
                 modifier = Modifier.fillMaxWidth().clickable(onClick = onDiagnose).padding(vertical = 12.dp),
+            )
+            Text(
+                "Send a test arrival",
+                color = Here,
+                fontSize = 16.sp,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onTestNotification).padding(vertical = 12.dp),
             )
             Text(
                 "Re-request Health Connect permissions",

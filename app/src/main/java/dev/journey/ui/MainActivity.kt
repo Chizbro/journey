@@ -1,17 +1,22 @@
 package dev.journey.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.Lifecycle
@@ -20,6 +25,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.journey.content.HADRIANS_WALL
 import dev.journey.data.ExpeditionState
 import dev.journey.data.ExpeditionStore
+import dev.journey.sync.Announcement
+import dev.journey.sync.Arrivals
 import dev.journey.sync.SyncEngine
 import dev.journey.sync.SyncWorker
 import kotlinx.coroutines.launch
@@ -59,6 +66,10 @@ class MainActivity : ComponentActivity() {
             var screen by remember { mutableStateOf<Screen>(Screen.Trail) }
             var message by remember { mutableStateOf<String?>(null) }
             var diagnostics by remember { mutableStateOf<String?>(null) }
+            // Set when the activity was launched from an arrival notification.
+            var openUnread by remember {
+                mutableStateOf(intent?.getBooleanExtra(Arrivals.EXTRA_OPEN_UNREAD, false) == true)
+            }
 
             suspend fun refresh() {
                 granted = runCatching {
@@ -75,6 +86,11 @@ class MainActivity : ComponentActivity() {
             val permissionLauncher = rememberLauncherForActivityResult(
                 PermissionController.createRequestPermissionResultContract()
             ) { scope.launch { refresh() } }
+
+            // Android 13+ needs this before an arrival notification can be shown at all.
+            val notificationLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { }
 
             val exportLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.CreateDocument("application/json")
@@ -111,6 +127,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // Existing installs never saw the onboarding prompt, so ask here too.
+            LaunchedEffect(loaded) {
+                if (loaded && state != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val ok = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (!ok) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+
             // Sync on every resume, not once on create.
             val lifecycleOwner = LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner) {
@@ -133,6 +159,9 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             state = store.begin(HADRIANS_WALL.id, heightCm, Instant.now())
                             SyncWorker.schedule(context)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
                         }
                     },
                 )
@@ -144,6 +173,18 @@ class MainActivity : ComponentActivity() {
                 metresTravelled = current.metresCredited,
                 readIds = current.readIds,
             )
+
+            // Arriving from a notification opens the queue at the first unread thing, which is
+            // ADR-0008's doorway: the notification names the furthest, the app reads them in order.
+            LaunchedEffect(openUnread, current.readIds, current.metresCredited) {
+                if (openUnread) {
+                    trail.unread.firstOrNull()?.let { first ->
+                        state = store.update { it.copy(readIds = it.readIds + first.id) }
+                        screen = Screen.Reading(first)
+                    }
+                    openUnread = false
+                }
+            }
 
             when (val s = screen) {
                 is Screen.Trail -> TrailScreen(
@@ -175,6 +216,17 @@ class MainActivity : ComponentActivity() {
                     diagnostics = diagnostics,
                     onDiagnose = { scope.launch { diagnostics = engine.diagnose() } },
                     onFixPermissions = { permissionLauncher.launch(SyncEngine.REQUIRED_PERMISSIONS) },
+                    onTestNotification = {
+                        Arrivals.post(
+                            context,
+                            Announcement(
+                                id = "test",
+                                title = "Test arrival",
+                                text = "If you can see this, notifications work. Real arrivals " +
+                                    "only fire between 8am and 10pm.",
+                            ),
+                        )
+                    },
                 )
 
                 is Screen.Reading -> {

@@ -27,14 +27,10 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
 
     override suspend fun doWork(): Result {
         return try {
-            val engine = SyncEngine(applicationContext, ExpeditionStore(applicationContext), HADRIANS_WALL)
-            when (val outcome = engine.sync()) {
-                is SyncOutcome.Synced -> {
-                    Log.d(TAG, "credited ${outcome.metresAdded} m, reached ${outcome.reached.size}")
-                    // Arrival notifications land here next.
-                }
-                else -> Log.d(TAG, "nothing to do: $outcome")
-            }
+            val store = ExpeditionStore(applicationContext)
+            val engine = SyncEngine(applicationContext, store, HADRIANS_WALL)
+            engine.sync()
+            announceIfDue(store)
             Result.success()
         } catch (e: Exception) {
             // Never Result.failure() — that cancels the periodic work and the app stops syncing
@@ -42,6 +38,22 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             Log.e(TAG, "sync failed", e)
             Result.success()
         }
+    }
+
+    /**
+     * Announces what is unread rather than what this sync crossed, so an arrival held back
+     * overnight is still announced in the morning without the worker having to remember it.
+     */
+    private suspend fun announceIfDue(store: ExpeditionStore) {
+        if (!Arrivals.isWakingHour()) {
+            Log.d(TAG, "arrival held until waking hours")
+            return
+        }
+        val state = store.load() ?: return
+        val announcement = Arrivals.pending(HADRIANS_WALL, state) ?: return
+        Arrivals.post(applicationContext, announcement)
+        store.update { it.copy(lastNotifiedId = announcement.id) }
+        Log.d(TAG, "announced ${announcement.id}")
     }
 
     companion object {

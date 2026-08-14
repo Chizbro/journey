@@ -28,6 +28,13 @@ data class ExpeditionState(
     val syncedThroughIso: String,
     /** Landmarks (and the ending) the user has actually read. */
     val readIds: Set<String> = emptySet(),
+    /**
+     * The furthest thing we have already notified about.
+     *
+     * Without this the worker would re-announce the same arrival every fifteen minutes until it
+     * was read. Defaults to null so existing exports still load.
+     */
+    val lastNotifiedId: String? = null,
     val heightCm: Int,
 ) {
     val startedAt: Instant get() = Instant.parse(startedAtIso)
