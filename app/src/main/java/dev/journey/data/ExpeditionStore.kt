@@ -58,6 +58,22 @@ class ExpeditionStore(private val context: Context) {
             }
         }
 
+    /**
+     * Like [update], but the transform may suspend — for work that has to happen *between*
+     * reading the state and writing it, such as querying Health Connect.
+     *
+     * The lock is held across that IO deliberately. A sync that loads, reads Health Connect, and
+     * then saves is a read-modify-write with a long middle; without the lock an import landing in
+     * that gap is overwritten by the sync's stale copy and vanishes without trace.
+     */
+    suspend fun mutate(transform: suspend (ExpeditionState) -> ExpeditionState): ExpeditionState? =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val current = if (file.exists()) decodeExpedition(file.readText()).getOrNull() else null
+                current?.let { transform(it).also { updated -> writeAtomically(updated.encode()) } }
+            }
+        }
+
     /** Exactly what is on disk. Export is a copy, not a conversion. */
     suspend fun export(): String? = load()?.encode()
 

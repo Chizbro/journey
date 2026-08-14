@@ -121,7 +121,15 @@ class MainActivity : ComponentActivity() {
                         message = "Could not read that file."
                     } else {
                         store.import(text)
-                            .onSuccess { state = it; message = "Imported %.1f km.".format(it.metresCredited / 1000.0) }
+                            .onSuccess {
+                                state = it
+                                // Say what will happen next. Import rewinds the watermark too, so
+                                // the next sync re-credits everything walked since the backup —
+                                // which is the point in a real restore, and looks like nothing
+                                // happened if you were expecting a rollback.
+                                message = "Restored %.1f km, as of %s. Steps walked since then will be re-credited on the next sync."
+                                    .format(it.metresCredited / 1000.0, it.syncedThrough)
+                            }
                             .onFailure { message = "Not a valid export: ${it.message}" }
                     }
                 }

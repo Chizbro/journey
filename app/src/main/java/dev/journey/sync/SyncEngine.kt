@@ -27,37 +27,53 @@ class SyncEngine(
     private val journey: Journey,
 ) {
 
+    /**
+     * Reads, credits, and advances the watermark as one indivisible step.
+     *
+     * The whole thing runs inside the store's lock. Reading Health Connect sits between loading
+     * the state and saving it, and an import landing in that gap would otherwise be overwritten by
+     * this sync's stale copy — the restore would appear to do nothing at all.
+     */
     suspend fun sync(now: Instant = Instant.now()): SyncOutcome {
-        val state = store.load() ?: return SyncOutcome.NoExpedition
-        if (!hasPermissions()) return SyncOutcome.NeedsPermission(state)
+        var outcome: SyncOutcome = SyncOutcome.NoExpedition
 
-        val creditTo = creditHorizon(state.syncedThrough, now)
-        if (!creditTo.isAfter(state.syncedThrough)) return SyncOutcome.NothingNew(state)
+        store.mutate { state ->
+            if (!hasPermissions()) {
+                outcome = SyncOutcome.NeedsPermission(state)
+                return@mutate state
+            }
 
-        val steps = readSteps(state.syncedThrough, creditTo)
-        val metres = (steps * state.metresPerStep).toLong()
+            val creditTo = creditHorizon(state.syncedThrough, now)
+            if (!creditTo.isAfter(state.syncedThrough)) {
+                outcome = SyncOutcome.NothingNew(state)
+                return@mutate state
+            }
 
-        val before = state.metresCredited
-        val after = (before + metres).coerceAtMost(journey.totalMetres)
+            val steps = readSteps(state.syncedThrough, creditTo)
+            val metres = (steps * state.metresPerStep).toLong()
 
-        val reached = journey.landmarks.filter {
-            it.metresFromStart > before && it.metresFromStart <= after
+            val before = state.metresCredited
+            val after = (before + metres).coerceAtMost(journey.totalMetres)
+
+            val reached = journey.landmarks.filter {
+                it.metresFromStart > before && it.metresFromStart <= after
+            }
+            val updated = state.copy(
+                metresCredited = after,
+                syncedThroughIso = creditTo.toString(),
+            )
+
+            outcome = SyncOutcome.Synced(
+                state = updated,
+                metresAdded = after - before,
+                reached = reached,
+                justFinished = after >= journey.totalMetres && before < journey.totalMetres,
+                warning = updated.syncWarning(now),
+            )
+            updated
         }
-        val finished = after >= journey.totalMetres && before < journey.totalMetres
 
-        val updated = state.copy(
-            metresCredited = after,
-            syncedThroughIso = creditTo.toString(),
-        )
-        store.save(updated)
-
-        return SyncOutcome.Synced(
-            state = updated,
-            metresAdded = after - before,
-            reached = reached,
-            justFinished = finished,
-            warning = updated.syncWarning(now),
-        )
+        return outcome
     }
 
     /**
