@@ -10,6 +10,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.journey.content.HADRIANS_WALL
 import dev.journey.data.ExpeditionStore
+import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 /**
@@ -45,11 +47,12 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
      * overnight is still announced in the morning without the worker having to remember it.
      */
     private suspend fun announceIfDue(store: ExpeditionStore) {
-        if (!Arrivals.isWakingHour()) {
-            Log.d(TAG, "arrival held until waking hours")
+        val state = store.load() ?: return
+        val dataAge = Duration.between(state.syncedThrough, Instant.now())
+        if (!Arrivals.shouldAnnounceNow(dataAge)) {
+            Log.d(TAG, "arrival held: data ${dataAge.toMinutes()} min old, outside waking hours")
             return
         }
-        val state = store.load() ?: return
         val announcement = Arrivals.pending(HADRIANS_WALL, state) ?: return
         Arrivals.post(applicationContext, announcement)
         store.update { it.copy(lastNotifiedId = announcement.id) }

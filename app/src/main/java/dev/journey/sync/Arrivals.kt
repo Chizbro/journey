@@ -10,6 +10,7 @@ import androidx.core.app.NotificationManagerCompat
 import dev.journey.data.ExpeditionState
 import dev.journey.domain.Journey
 import dev.journey.ui.MainActivity
+import java.time.Duration
 import java.time.LocalTime
 import java.time.ZoneId
 
@@ -27,11 +28,28 @@ object Arrivals {
     private const val NOTIFICATION_ID = 1
     const val EXTRA_OPEN_UNREAD = "open_unread"
 
-    /** Outside these hours an arrival waits. A 3am crossing greets the user at breakfast. */
     private val WAKING_FROM: LocalTime = LocalTime.of(8, 0)
     private val WAKING_UNTIL: LocalTime = LocalTime.of(22, 0)
 
-    fun isWakingHour(zone: ZoneId = ZoneId.systemDefault()): Boolean {
+    /** Data this fresh means the user is walking now, not that the poll is catching up. */
+    private val LIVE: Duration = Duration.ofMinutes(45)
+
+    /**
+     * Whether to announce now or hold until morning.
+     *
+     * The naive rule is "never notify at night", but crossing a Landmark at 3am means the user is
+     * out walking at 3am, and telling them so is the entire point of the app.
+     *
+     * The hazard is not the hour, it is that **the notification time is not the crossing time**.
+     * App Standby defers the poll by hours — two, and nearly eight once the app goes unused — so
+     * a Landmark crossed at 9pm can surface at 3am, in bed, long after the moment has passed.
+     *
+     * So judge freshness, not the clock. If the data we just credited is minutes old the user is
+     * walking and should hear about it whatever the hour. If it is hours old we are catching up on
+     * something already over, and that can wait for a civilised time.
+     */
+    fun shouldAnnounceNow(dataAge: Duration, zone: ZoneId = ZoneId.systemDefault()): Boolean {
+        if (dataAge < LIVE) return true
         val now = LocalTime.now(zone)
         return !now.isBefore(WAKING_FROM) && now.isBefore(WAKING_UNTIL)
     }
