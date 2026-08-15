@@ -6,6 +6,11 @@
 
 image = "Dockerfile"
 
+# Gradle's JVM, the Kotlin compile daemon and the Agent do not fit in the 4g
+# box gives by default. When they don't, the kernel kills the largest
+# process — which is the Agent, not the build.
+memory = "8g"
+
 # Gradle downloads its world on every build, and a Box is default-deny.
 allow = [
   ".gradle.org",           # the wrapper distribution, and the plugin portal
