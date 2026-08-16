@@ -2,9 +2,15 @@
 #
 # box shows this to the Operator before it acts on any of it. Nothing here
 # is granted because it is written here — the Dockerfile is built only once
-# approved, and each domain is allowed one at a time, by hand.
+# approved, each domain is allowed one at a time, and the memory figure is
+# agreed to separately.
 
 image = "Dockerfile"
+
+# Android's resource compiler is published for x86_64 and nothing else, so an
+# ARM Mac has to emulate. Builds are slower for it; there is no alternative
+# that ends in a working APK.
+platform = "linux/amd64"
 
 # Gradle's JVM, the Kotlin compile daemon and the Agent do not fit in the 4g
 # box gives by default. When they don't, the kernel kills the largest
