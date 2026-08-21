@@ -43,7 +43,8 @@ class SyncEngine(
                 return@mutate state
             }
 
-            val creditTo = creditHorizon(state.syncedThrough, now)
+            val newest = newestRecordEnd(state.syncedThrough, now)
+            val creditTo = creditHorizon(newest, now)
             if (!creditTo.isAfter(state.syncedThrough)) {
                 outcome = SyncOutcome.NothingNew(state)
                 return@mutate state
@@ -103,8 +104,8 @@ class SyncEngine(
      * With no records visible there is nothing to anchor to, so the watermark creeps forward on
      * wall-clock instead. Nothing is lost by that: the range holds no data by definition.
      */
-    private suspend fun creditHorizon(from: Instant, now: Instant): Instant =
-        newestRecordEnd(from, now) ?: now.minus(IDLE_ADVANCE)
+    private fun creditHorizon(newest: Instant?, now: Instant): Instant =
+        newest ?: now.minus(IDLE_ADVANCE)
 
     /**
      * A raw read, used only to find the newest visible record's end — never summed. Totals come
@@ -157,7 +158,7 @@ class SyncEngine(
 
         val missing = REQUIRED_PERMISSIONS - granted
         val newest = newestRecordEnd(state.syncedThrough, now)
-        val horizon = creditHorizon(state.syncedThrough, now)
+        val horizon = creditHorizon(newest, now)
         val pending = runCatching { readSteps(state.syncedThrough, now) }.getOrDefault(-1)
         val creditable = runCatching { readSteps(state.syncedThrough, horizon) }.getOrDefault(-1)
 

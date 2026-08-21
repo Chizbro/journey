@@ -33,10 +33,17 @@ permanently unreadable. This is a realistic failure, not a theoretical one:
 - Aggressive OEM battery management (Samsung, Xiaomi and others) kills background work
   independently of anything we do.
 - The user may simply revoke the permission and forget.
+- A restored Expedition has never been through onboarding, which is where the poll is enqueued.
 
 So the app must track how stale its watermark is and warn the user *before* the cliff — well
 inside 30 days, not on day 29. If the window is ever exceeded, say so honestly: some distance was
 lost and cannot be recovered.
+
+That warning does not cover the last case, which is why restore has to re-establish the poll
+itself. Opening the app syncs, so a restored Expedition with no background work keeps a perfectly
+fresh watermark and never looks stale — it just stops noticing arrivals while closed. Enqueuing
+the poll on every launch is a no-op when it is already scheduled, and the only way to make the
+repair unconditional.
 
 ## The release keystore is backed up off-machine
 

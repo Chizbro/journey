@@ -10,9 +10,6 @@ import androidx.core.app.NotificationManagerCompat
 import dev.journey.data.ExpeditionState
 import dev.journey.domain.Journey
 import dev.journey.ui.MainActivity
-import java.time.Duration
-import java.time.LocalTime
-import java.time.ZoneId
 
 /**
  * The arrival notification: a doorway, not the content (ADR-0008).
@@ -28,38 +25,12 @@ object Arrivals {
     private const val NOTIFICATION_ID = 1
     const val EXTRA_OPEN_UNREAD = "open_unread"
 
-    private val WAKING_FROM: LocalTime = LocalTime.of(8, 0)
-    private val WAKING_UNTIL: LocalTime = LocalTime.of(22, 0)
-
-    /** Data this fresh means the user is walking now, not that the poll is catching up. */
-    private val LIVE: Duration = Duration.ofMinutes(45)
-
-    /**
-     * Whether to announce now or hold until morning.
-     *
-     * The naive rule is "never notify at night", but crossing a Landmark at 3am means the user is
-     * out walking at 3am, and telling them so is the entire point of the app.
-     *
-     * The hazard is not the hour, it is that **the notification time is not the crossing time**.
-     * App Standby defers the poll by hours — two, and nearly eight once the app goes unused — so
-     * a Landmark crossed at 9pm can surface at 3am, in bed, long after the moment has passed.
-     *
-     * So judge freshness, not the clock. If the data we just credited is minutes old the user is
-     * walking and should hear about it whatever the hour. If it is hours old we are catching up on
-     * something already over, and that can wait for a civilised time.
-     */
-    fun shouldAnnounceNow(dataAge: Duration, zone: ZoneId = ZoneId.systemDefault()): Boolean {
-        if (dataAge < LIVE) return true
-        val now = LocalTime.now(zone)
-        return !now.isBefore(WAKING_FROM) && now.isBefore(WAKING_UNTIL)
-    }
-
     /**
      * What to announce, if anything.
      *
-     * Driven by what is *unread*, not by what this particular sync happened to cross. That is what
-     * lets quiet hours work: an arrival skipped at 3am is still pending at 8am and gets announced
-     * then, without needing to remember which sync found it.
+     * Driven by what is *unread*, not by what this particular sync happened to cross. The worker
+     * therefore never has to remember which sync found what: an arrival that could not be shown —
+     * notifications off at the time — is simply still pending on the next poll.
      */
     fun pending(journey: Journey, state: ExpeditionState): Announcement? {
         val position = state.metresCredited
@@ -88,8 +59,21 @@ object Arrivals {
         return Announcement(furthestId, title, text)
     }
 
-    fun post(context: Context, announcement: Announcement) {
+    /**
+     * Posts the notification, and reports whether it was actually shown.
+     *
+     * The return value is not decoration. The caller records the announced id so the worker does
+     * not re-announce the same arrival every fifteen minutes — and recording that for a
+     * notification the system dropped burns the arrival for good. It stays marked as announced
+     * while never having been seen, so turning notifications on afterwards does not bring it
+     * back; the user hears nothing until they cross something new.
+     *
+     * Nothing here throws when notifications are off. Android 13+ drops the post silently, so the
+     * state has to be asked for rather than inferred from a failure.
+     */
+    fun post(context: Context, announcement: Announcement): Boolean {
         createChannel(context)
+        if (!canPost(context)) return false
 
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -112,9 +96,21 @@ object Arrivals {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
 
-        runCatching {
+        return runCatching {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
-        }
+        }.isSuccess
+    }
+
+    /**
+     * Notifications can be off at the app level — the runtime permission denied, or the whole app
+     * switched off in system settings — or left on there and silenced at the channel. Both look
+     * identical from `notify()`, which is to say they look like success.
+     */
+    private fun canPost(context: Context): Boolean {
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+        val channel = context.getSystemService(NotificationManager::class.java)
+            .getNotificationChannel(CHANNEL)
+        return channel == null || channel.importance != NotificationManager.IMPORTANCE_NONE
     }
 
     private fun createChannel(context: Context) {

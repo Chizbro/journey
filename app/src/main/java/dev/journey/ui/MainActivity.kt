@@ -135,9 +135,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Existing installs never saw the onboarding prompt, so ask here too.
+            // Both of these repair Expeditions that never came through onboarding.
             LaunchedEffect(loaded) {
-                if (loaded && state != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (!loaded || state == null) return@LaunchedEffect
+
+                // The poll is enqueued at onBegin, but a restored Expedition never passes through
+                // it — import writes the state file directly. Without this, restoring a backup
+                // silently costs you the background half of the app, and says nothing: the Trail
+                // is still correct whenever you look, because opening it syncs, so the only
+                // symptom is that arrivals stop arriving. KEEP makes this a no-op when the work
+                // is already enqueued, so it is safe on every launch.
+                SyncWorker.schedule(context)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     val ok = ContextCompat.checkSelfPermission(
                         context, Manifest.permission.POST_NOTIFICATIONS
                     ) == PackageManager.PERMISSION_GRANTED
@@ -224,16 +234,20 @@ class MainActivity : ComponentActivity() {
                     diagnostics = diagnostics,
                     onDiagnose = { scope.launch { diagnostics = engine.diagnose() } },
                     onFixPermissions = { permissionLauncher.launch(SyncEngine.REQUIRED_PERMISSIONS) },
+                    // The one place "I'm not getting notifications" can be answered. Say when
+                    // nothing was shown, rather than posting into the void and looking broken.
                     onTestNotification = {
-                        Arrivals.post(
+                        val shown = Arrivals.post(
                             context,
                             Announcement(
                                 id = "test",
                                 title = "Test arrival",
-                                text = "If you can see this, notifications work. Real arrivals " +
-                                    "only fire between 8am and 10pm.",
+                                text = "If you can see this, notifications work.",
                             ),
                         )
+                        message = if (shown) null else
+                            "Notifications are switched off for Journey. Turn them on in " +
+                                "Android Settings > Apps > Journey > Notifications."
                     },
                 )
 

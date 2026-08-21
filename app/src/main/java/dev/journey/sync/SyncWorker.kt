@@ -10,8 +10,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.journey.content.HADRIANS_WALL
 import dev.journey.data.ExpeditionStore
-import java.time.Duration
-import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 /**
@@ -32,7 +30,7 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val store = ExpeditionStore(applicationContext)
             val engine = SyncEngine(applicationContext, store, HADRIANS_WALL)
             engine.sync()
-            announceIfDue(store)
+            announce(store)
             Result.success()
         } catch (e: Exception) {
             // Never Result.failure() — that cancels the periodic work and the app stops syncing
@@ -43,18 +41,22 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
     }
 
     /**
-     * Announces what is unread rather than what this sync crossed, so an arrival held back
-     * overnight is still announced in the morning without the worker having to remember it.
+     * Announces what is unread rather than what this sync crossed, so the worker never has to
+     * remember which sync found what.
+     *
+     * Arrivals fire whenever the poll finds them, at any hour — see ADR-0008 for why the night
+     * hold was dropped rather than repaired.
      */
-    private suspend fun announceIfDue(store: ExpeditionStore) {
+    private suspend fun announce(store: ExpeditionStore) {
         val state = store.load() ?: return
-        val dataAge = Duration.between(state.syncedThrough, Instant.now())
-        if (!Arrivals.shouldAnnounceNow(dataAge)) {
-            Log.d(TAG, "arrival held: data ${dataAge.toMinutes()} min old, outside waking hours")
+        val announcement = Arrivals.pending(HADRIANS_WALL, state) ?: return
+        if (!Arrivals.post(applicationContext, announcement)) {
+            // Deliberately not recorded as notified. Nothing was shown, so the arrival has to stay
+            // pending — otherwise turning notifications on later announces nothing, because as far
+            // as this worker is concerned it already did.
+            Log.w(TAG, "arrival not shown: notifications are off")
             return
         }
-        val announcement = Arrivals.pending(HADRIANS_WALL, state) ?: return
-        Arrivals.post(applicationContext, announcement)
         store.update { it.copy(lastNotifiedId = announcement.id) }
         Log.d(TAG, "announced ${announcement.id}")
     }
